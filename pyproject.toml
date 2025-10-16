@@ -1,0 +1,11 @@
+[project]
+name = "lava-chicken"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "hikari>=2.4.1",
+    "hikari-lightbulb>=3.2.1",
+    "lavalink-rs>=0.14.2",
+]
