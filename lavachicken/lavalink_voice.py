@@ -11,17 +11,13 @@ from lavalink_rs.model.player import ConnectionInfo
 
 
 class LavalinkVoice(VoiceConnection):
-    __slots__ = [
+    __slots__ = (
         "lavalink",
         "player",
-        "__channel_id",
-        "__guild_id",
         "__session_id",
-        "__is_alive",
-        "__shard_id",
-        "__on_close",
         "__owner",
-    ]
+        "__should_close",
+    )
     lavalink: LavalinkClient
     player: PlayerContext
 
@@ -33,68 +29,62 @@ class LavalinkVoice(VoiceConnection):
         channel_id: hikari.Snowflake,
         guild_id: hikari.Snowflake,
         session_id: str,
-        is_alive: bool,
         shard_id: int,
         owner: VoiceComponent,
-        on_close: t.Any,
     ) -> None:
+        # super().__init__(channel_id, guild_id, shard_id)
         self.player = player
         self.lavalink = lavalink_client
 
-        self.__channel_id = channel_id
-        self.__guild_id = guild_id
         self.__session_id = session_id
-        self.__is_alive = is_alive
-        self.__shard_id = shard_id
         self.__owner = owner
-        self.__on_close = on_close
+        self.__should_close = True
 
-    @property
-    def channel_id(self) -> hikari.Snowflake:
-        """Return the ID of the voice channel this voice connection is in."""
-        return self.__channel_id
+    @staticmethod
+    async def reconnect(
+        player: PlayerContext, endpoint: str, token: str, session_id: str
+    ) -> None:
+        update_player = UpdatePlayer()
+        connection_info = ConnectionInfo(endpoint, token, session_id)
+        connection_info.fix()
+        update_player.voice = connection_info
+        await player.update_player(update_player, True)
 
-    @property
-    def guild_id(self) -> hikari.Snowflake:
-        """Return the ID of the guild this voice connection is in."""
-        return self.__guild_id
+    async def disconnect(self) -> None:
+        """Signal the process to shut down."""
+        if self.__should_disconnect:
+            await self.lavalink.delete_player(self.guild_id)
+        else:
+            self.__should_disconnect = True
 
-    @property
-    def is_alive(self) -> bool:
-        """Return `builtins.True` if the connection is alive."""
-        return self.__is_alive
+    async def notify(self, event: hikari.VoiceEvent) -> None:
+        """Submit an event to the voice connection to be processed."""
+        #     if isinstance(event, hikari.VoiceServerUpdateEvent):
+        #         # Handle the bot being moved frome one channel to another
+        #         assert event.raw_endpoint
+        #         update_player = UpdatePlayer()
+        #         connection_info = ConnectionInfo(
+        #             event.raw_endpoint, event.token, self.__session_id
+        #         )
+        #         connection_info.fix()
+        #         update_player.voice = connection_info
+        #         await self.player.update_player(update_player, True)
+        if not isinstance(event, hikari.VoiceServerUpdateEvent):
+            return
 
-    @property
-    def shard_id(self) -> int:
-        """Return the ID of the shard that requested the connection."""
-        return self.__shard_id
+        # TODO handle this better
+        # https://discord.com/developers/docs/topics/gateway-events#voice-server-update
+        assert event.raw_endpoint
+
+        # Handle the bot being moved frome one channel to another
+        await LavalinkVoice.reconnect(
+            self.player, event.raw_endpoint, event.token, self.__session_id
+        )
 
     @property
     def owner(self) -> VoiceComponent:
         """Return the component that is managing this connection."""
         return self.__owner
-
-    async def disconnect(self) -> None:
-        """Signal the process to shut down."""
-        self.__is_alive = False
-        await self.lavalink.delete_player(self.__guild_id)
-        await self.__on_close(self)
-
-    async def join(self) -> None:
-        """Wait for the process to halt before continuing."""
-
-    async def notify(self, event: hikari.VoiceEvent) -> None:
-        """Submit an event to the voice connection to be processed."""
-        if isinstance(event, hikari.VoiceServerUpdateEvent):
-            # Handle the bot being moved frome one channel to another
-            assert event.raw_endpoint
-            update_player = UpdatePlayer()
-            connection_info = ConnectionInfo(
-                event.raw_endpoint, event.token, self.__session_id
-            )
-            connection_info.fix()
-            update_player.voice = connection_info
-            await self.player.update_player(update_player, True)
 
     @classmethod
     async def connect(
@@ -106,9 +96,19 @@ class LavalinkVoice(VoiceConnection):
         player_data: t.Any,
         deaf: bool = True,
     ) -> LavalinkVoice:
-        voice: LavalinkVoice = await client.voice.connect_to(
+        try:
+            conn = client.voice.connections.get(guild_id)
+            if conn:
+                assert isinstance(conn, LavalinkVoice)
+                conn.__should_disconnect = False
+                await client.voice.disconnect(guild_id)
+        except:
+            pass
+
+        voice = await client.voice.connect_to(
             guild_id,
             channel_id,
+            disconnect_existing=False,
             voice_connection_type=LavalinkVoice,
             lavalink_client=lavalink_client,
             player_data=player_data,
@@ -123,7 +123,6 @@ class LavalinkVoice(VoiceConnection):
         channel_id: hikari.Snowflake,
         endpoint: str,
         guild_id: hikari.Snowflake,
-        on_close: t.Any,
         owner: VoiceComponent,
         session_id: str,
         shard_id: int,
@@ -133,12 +132,16 @@ class LavalinkVoice(VoiceConnection):
     ) -> LavalinkVoice:
         del user_id
         lavalink_client = kwargs["lavalink_client"]
-
-        player = await lavalink_client.create_player_context(
-            guild_id, endpoint, token, session_id
-        )
-
         player_data = kwargs["player_data"]
+
+        player = lavalink_client.get_player_context(guild_id)
+
+        if player:
+            await LavalinkVoice.reconnect(player, endpoint, token, session_id)
+        else:
+            player = await lavalink_client.create_player_context(
+                guild_id, endpoint, token, session_id
+            )
 
         if player_data:
             player.data = player_data
@@ -149,10 +152,8 @@ class LavalinkVoice(VoiceConnection):
             channel_id=channel_id,
             guild_id=guild_id,
             session_id=session_id,
-            is_alive=True,
             shard_id=shard_id,
             owner=owner,
-            on_close=on_close,
         )
 
         return self

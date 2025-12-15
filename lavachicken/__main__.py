@@ -20,7 +20,7 @@ bot = hikari.GatewayBot(
     | hikari.Intents.GUILD_MEMBERS,
 )
 client = lightbulb.client_from_app(bot)
-bot.subscribe(hikari.StartingEvent, client.start)
+# bot.subscribe(hikari.StartingEvent, client.start)
 bot.subscribe(hikari.StoppedEvent, client.stop)
 
 
@@ -29,7 +29,7 @@ async def lavalink_factory():
         "localhost:2333",
         False,  # is the server SSL?
         "youshallnotpass",  # os.environ["LAVALINK_PASSWORD"],
-        10,  # event.my_user.id,
+        hikari.applications.get_token_id(os.environ["DISCORD_BOT_TOKEN"]),
     )
     lavalink_client = await lavalink_rs.LavalinkClient.new(
         Events(),
@@ -44,6 +44,12 @@ registry.register_factory(
     lavalink_rs.LavalinkClient,
     lavalink_factory,
 )
+
+
+@bot.listen(hikari.StartingEvent)
+async def on_starting(event: hikari.StartingEvent):
+    await client.load_extensions("lavachicken.extensions.player")
+    await client.start()
 
 
 class Events(lavalink_rs.EventHandler):
@@ -76,18 +82,18 @@ class Events(lavalink_rs.EventHandler):
         data = t.cast(t.Tuple[hikari.Snowflake, hikari.api.RESTClient], player_ctx.data)
 
         print(event.track, event.track.user_data)
-        # assert event.track.user_data and isinstance(event.track.user_data, dict)
+        assert event.track.user_data and isinstance(event.track.user_data, dict)
 
-        # if event.track.info.uri:
-        #     await data[1].create_message(
-        #         data[0],
-        #         f"Started playing [`{event.track.info.author} - {event.track.info.title}`](<{event.track.info.uri}>) | Requested by <@!{event.track.user_data['requester_id']}>",
-        #     )
-        # else:
-        #     await data[1].create_message(
-        #         data[0],
-        #         f"Started playing `{event.track.info.author} - {event.track.info.title}` | Requested by <@!{event.track.user_data['requester_id']}>",
-        #     )
+        if event.track.info.uri:
+            await data[1].create_message(
+                data[0],
+                f"Started playing [`{event.track.info.author} - {event.track.info.title}`](<{event.track.info.uri}>) | Requested by <@!{event.track.user_data['requester_id']}>",
+            )
+        else:
+            await data[1].create_message(
+                data[0],
+                f"Started playing `{event.track.info.author} - {event.track.info.title}` | Requested by <@!{event.track.user_data['requester_id']}>",
+            )
 
 
 # Register the command with the client
@@ -111,7 +117,7 @@ async def _join(
     ctx: lightbulb.Context,
     bot: hikari.GatewayBot,
     lavalink_client: lavalink_rs.LavalinkClient,
-) -> t.Optional[hikari.Snowflake]:
+) -> hikari.Snowflake | None:
     if not ctx.guild_id or not ctx.member:
         return None
 
@@ -138,14 +144,14 @@ async def _join(
     else:
         assert isinstance(voice, LavalinkVoice)
 
-        await LavalinkVoice.connect(
-            ctx.guild_id,
-            channel_id,
-            bot,
-            lavalink_client,
-            (ctx.channel_id, bot.rest),
-            # old_voice=voice,
-        )
+        # await LavalinkVoice.connect(
+        #     ctx.guild_id,
+        #     channel_id,
+        #     bot,
+        #     lavalink_client,
+        #     (ctx.channel_id, bot.rest),
+        #     # old_voice=voice,
+        # )
 
     return channel_id
 
@@ -181,11 +187,11 @@ class Play(lightbulb.SlashCommand, name="play", description="play a song"):
 
         print(f"searching {query=}")
 
-        # tracks = await lavalink_client.load_tracks(ctx.guild_id, query)
+        tracks = await lavalink_client.load_tracks(ctx.guild_id, query)
 
-        tracks = await lavalink_client.load_tracks(
-            ctx.guild_id, "https://files.vicky.rs/burp%20artist.mp3"
-        )
+        # tracks = await lavalink_client.load_tracks(
+        #     ctx.guild_id, "https://files.vicky.rs/burp%20artist.mp3"
+        # )
         loaded_tracks = tracks.data
         match tracks.load_type:
             case TrackLoadType.Track:
@@ -242,8 +248,8 @@ class NowPlaying(
 # Note that this is blocking meaning no code after this line will run
 # until the bot is shut off
 bot.run(
-    # activity=hikari.Activity(
-    #     name="La-la-la-lava, ch-ch-ch-chicken",
-    #     type=hikari.ActivityType.LISTENING,
-    # )
+    activity=hikari.Activity(
+        name="La-la-la-lava, ch-ch-ch-chicken",
+        type=hikari.ActivityType.LISTENING,
+    )
 )
